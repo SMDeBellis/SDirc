@@ -1,0 +1,36 @@
+
+
+
+Min functionality-
+Create a room
+Join a room
+leave a room
+list availabe rooms
+
+optional functionality
+private chat
+file transfer
+budy lists 
+etc.
+
+
+SDIrc Server Specs-
+
+Server Must listen for incoming connections from clients.
+When a client connects the the server it will accept the connection
+and store the new connection socket in a list of connected sockets.
+The very first thing that should be sent from the client is a /nick command
+with the clients computer name. The address should then be stored in a dictionary
+as the key with the value being the user name/nickname of the user connected to the port.
+
+Next the server needs to check all connected ports for incoming messages from the clients.
+It will use select to find all sockets with available messages and loop through them parsing
+out the command and fulfill the command and then broadcast to all clients logged into the 
+server.
+
+SDIrc Client Specs -
+/alt The client first checks to see if it is connected to a server, if
+not it gets the computer name and waits for user to type in command/.
+Client first connects to server. The very first thing the client does
+after making connection with the server is send a /nick command with
+the clients name taken as the user name from the computer.
