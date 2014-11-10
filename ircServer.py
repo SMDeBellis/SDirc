@@ -122,11 +122,29 @@ class ircServer:
     def parse_message(self, msg):
         #parsed_msg[0] = ip addr
         #parsed_msg[1] = current room
-        #the next parts could be: ([\command (arg)*]?)?(msg)*
+        #the next parts could be: ([/command (arg)*]?)?(msg)*
         parsed_msg = msg.split()
+        command_re = '/.'
         ip = parsed_msg[0]
         current_room = parsed_msg[1]
-        
+
+        #check if not a command then it needs to be broadcast to all of the users in the room
+        if not re.match(command_re, parsed_msg[2]):
+            self.broadcast_message(ip, current_room, ''.join(parsed_msg[3:]))
+        else:
+            #join a room
+            if re.match('/join', parsed_msg[2]):
+                self.join_room(ip, ''.join(parsed_msg[3:]))
+            #leave a room
+            if re.match('/leave', parsed_msg[2]):
+                self.leave_room(ip, current_room)
+            #list all available rooms
+            if re.match('/list', parsed_msg[2]):
+                self.list_rooms(ip, current_room)
+            #leave all rooms and remove disconnect user
+            if re.match('/quit', parsed_msg[3]):
+                self.purge_user(ip)
+
     
         
 
