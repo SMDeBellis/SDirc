@@ -12,36 +12,10 @@ from threading import *
 #   /whois - returns proper name, what channels they're in, what server they logged into 
 #   /join - join a room 
 #   /leave - leave a room
-'''
-class clientObj:
-    _IP = None
-    _nick = ''
-    _sock = None
-    _rooms = []
 
-    def __init__(self, ip, sock):
-        self._IP = ip
-        self._sock = sock
-    
-    def add_to_room(self, roomName):
-        self._rooms.append(roomName)
+# Message format -
+#   current room, [command, [args]* ], text
 
-    def get_ip(self):
-        return self._IP
-
-    def get_rooms(self):
-        return self._rooms
-
-    def get_socket(self):
-        return self._sock
-
-    def remove_from_room(self, roomName):
-        if roomName is in self._rooms:
-            self._rooms.remove(roomName)
-
-    def set_nickname(self, nick):
-        self._nick = nick
-'''
 class ircServer:
     
     _HOST = ''
@@ -49,8 +23,9 @@ class ircServer:
     _masterSocket = None
     _clientsNick = dict() #hashes ip's to client nick
     _clientSockets = dict() #hashes ips to sockets
+    _listeningSockets = [] #all of the sockets to be checked for incoming messages
     _rooms = dict() # hashes room names to list of ips in room
-    _lobby = [] # list for clients that are not in a room. Any message
+    _lobby = [] # list of client ip's that are not in a room. Any message
                 # input will return an error message until they join a room.
     _incomingSockets = []
     _outgoingSockets = []
@@ -89,39 +64,82 @@ class ircServer:
     #   adds them to the list of client sockets
     #   it also calls a receive which must carry the hostname of the computer
     #   being logged on by.
-    def get_new_connections(self, ready_to_connect):
+    def get_new_connections(self):
         to_read, to_write, err = select(self._incomingSockets, self._outgoingSockets, self._errorSockets, 10)
-        
+           
         for sock in to_read:
-                print sock
-                if sock == self._masterSocket:
-                    conn, addr = sock.accept()
-                    self._clientSockets[addr] = conn
-                    hostName = conn.recv(1024)
-                    self._clientsNick[addr[0]] = hostName
-                    #self.lobby.append(conn)
-        print 'exiting get_new_connections'
-        '''
-        for sock in ready_to_connect:
-            print sock
             if sock == self._masterSocket:
-                conn, adddr = sock.accept()
-                self._clientSockets[addr[0]] = conn
-                host_name = conn.recv(1024)
-                self._clientNick[addr[0]] = host_name
-                self._lobby.append(conn)
-        print 'exiting get_new_connection'
-        '''
+                conn, addr = sock.accept()
+                self._clientSockets[addr] = conn
+                hostName = conn.recv(1024)
+                self._clientsNick[addr[0]] = hostName
+                self._listeningSockets.append(conn)
+                self._lobby.append(addr[0])
+        print 'exiting get_new_connections'
     
+    def remove_from_all_rooms(self, ip):
+        room_lists = self._rooms.values()
+        for room in room_lists:
+            room.remove(ip)
+    
+    def remove_client(self, ip):
+        self.remove_from_all_rooms(ip)
+        del self._clientNick[ip]
+        
+
+    def get_incoming_messages(self):
+        to_read, to_write, err = select(self._listeningSockets, [], self._listeningSockets, 10)
+
+        #if there is any sockets in err
+            #-get the sockets ip address
+            #-remove ip from all rooms
+            #-remove socket from lobby
+            #-remove socket from listeningSockets list
+            #-remove nickname from nickname list
+
+        for sock in err:
+            addr = sock.getpeername()
+            self.remove_client(addr[0])
+            self._lobby.remove(sock)
+            self._listeningSockets.remove(sock)
+
+        for sock in to_read:
+            msg = []
+            addr = sock.getpeername()
+            msg.append(addr[0])
+            while 1:
+                buf = sock.recv(1024)
+                if buf is not None:
+                    msg.append(buf)
+                else:
+                    break
+            #parse_message(''.join(msg))
+
+#ended writing the parse message function. Need to finish it and then decide how to handle 
+#   either the command and/or broadcasting the message.
+#   the format I have decided on for the messages are ip addr - current room - then either command/args or text
+#   to broadcast to other users in same room.
+    def parse_message(self, msg):
+        #parsed_msg[0] = ip addr
+        #parsed_msg[1] = current room
+        #the next parts could be: ([\command (arg)*]?)?(msg)*
+        parsed_msg = msg.split()
+        ip = parsed_msg[0]
+        current_room = parsed_msg[1]
+        
+    
+        
 
 
-    #def get_incoming_messages():
-    #def parse_message():
+        
+
+
+            
     #def broadcast_message():
     #def join_room(self, room_name):
     #def leave_room():
     
-    def connection_dump(self):
+    def clientSockets_dump(self):
         key_list = self._clientSockets.keys()
         if key_list is None:
             print 'empty socket list'
@@ -129,7 +147,7 @@ class ircServer:
         else:
             return key_list
 
-    def nickname_dump(self):
+    def clientsNick_dump(self):
         key_list = self._clientsNick.keys()
         if key_list is None:
             print 'empty nickname list'
@@ -137,6 +155,17 @@ class ircServer:
         else:
             for i in key_list:
                 print self._clientsNick[i]
+    
+    def lobby_dump(self):
+        if len(self._lobby) is 0:
+            print 'empty list'
+        else:
+            print self._lobby
+
+    def testClientsNickDump(self):
+        self._clientsNick = {'1.2.1.2':'jimmy','3.1.2.3': 'ron'}
+        self.clientsNick_dump()
+
 
     def testGetNewConnections(self):
         #self.start_keyboard_thread()
@@ -145,9 +174,11 @@ class ircServer:
         print 'in testGetNewConnection before loop'
         for i in range(0,10):
             print 'in testGetNewConnetion in loop'
+            #to_read, to_write, err = select(self._incomingSockets, self._outgoingSockets, self._errorSockets, 10)
+    
             self.get_new_connections()
             print 'dumping connected sockets *****'
-            connected_ips = self.connection_dump()
+            connected_ips = self.clientSockets_dump()
             if cmp(old_list, connected_ips) is 0:
                 print 'no new connections'
             else:
@@ -156,7 +187,12 @@ class ircServer:
             print ''
             print ''
             print 'dumping nicknames *****'
-            self.nickname_dump()
+            self.clientsNick_dump()
+
+        print 'dumping lobby *****'
+        self.lobby_dump()
+        
+        
 
 
 
@@ -170,17 +206,21 @@ class ircServer:
 
 
 if __name__ == '__main__':
+    
+    
     server = None
     try:
         server = ircServer(5000)
-        #try:
-        server.testGetNewConnections()
-        #except:
-        print 'testGetNewConnections error: closing server'
-        server.close()
+        try:
+            #server.testClientsNickDump()
+            #server.testGetNewConnections()
+            server.get_incoming_messages()
+        except:
+            print 'testGetNewConnections error: closing server'
+            server.close()
     except:
         print 'server cannot be started'
-           
+    
 
 
 
