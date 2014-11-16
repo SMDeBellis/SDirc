@@ -5,6 +5,117 @@
 from threading import *
 import errno
 import socket
+import sys
+import re
+from select import *
+
+class ircClient:
+    _host = None
+    _port = None
+    _nickname = None 
+    _current_room = None
+    _room_list = []
+    _sock = None
+
+    def __init__(self, server_ip, server_port):
+        self._host = server_ip
+        self._port = server_port
+        self.nickname = socket.gethostname()
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            self._sock.connect((self._host, self._port))
+        except socket.error:
+            sys.exit(socket.error[1])
+        self._sock.sendall(self.nickname)
+
+    # messages must be sent to server in this format:
+    #   'current room' 'messsage'
+    # current room may be none
+    def send_input(self, msg):
+        print 'entering send_input'
+        to_read, to_write, err = select([], [self._sock], [], 10)
+        msg_to_send = self.prep_message_to_send(str(self._current_room) + ' ' + msg)
+        msg_length = len(msg_to_send)
+        total_sent = 0
+        print 'msg_to_send = ', [msg_to_send]
+        if len(to_write) is not 0:
+            while total_sent < msg_length:
+                print 'sending message'
+                sent = self._sock.send(msg_to_send)
+                total_sent = total_sent + sent
+            print 'message sent'
+        print 'leaving send_input'
+
+    def receive_from_server(self):
+        print 'entering receive_from_server'
+        to_read, to_write, err = select([self._sock], [], [], 10)
+        buf = []
+        if len(to_read) is not 0:
+            count = 0
+            while True:
+                chunk = self._sock.recv(1024)
+                print 'chunk = ', [chunk.split('\r\n')], ' count = ' + str(count)
+                if chunk.endswith(u"\r\n"):
+                    buf.append(chunk)
+                    break
+                else:
+                    buf.append(chunk)
+                count += 1
+
+            print 'buf= ', buf
+            print 'right before self.parse_iincoming()'
+            self.parse_incoming(' '.join(buf))
+            print 'right after self.parse_incoming()'
+        
+        print 'leaving receive_from_server'
+
+#my idea for right now is to send any and all messages to the server and let it parse 
+# the message and then do actions on the client side dependent upon the return message
+# coming from the server.
+#   Incoming message from server format:
+#       'instruction code' 'room to post to' 'message'
+#   Server Codes:                   Error Codes:
+#       100_incoming_message            101_room_error   
+#       200_incoming_private            201_command_error
+#       300_room_joined
+    def parse_incoming(self, msg):
+        print 'entering parse_incoming w/ msg = ', msg
+        parsed_msg = msg.split()
+        code = parsed_msg[0] # get the command code
+        room = parsed_msg[1] # get the room
+        if re.match('100.', code):
+            print ' '.join(parsed_msg)
+        elif re.match('300.', code):
+            self._current_room = ' '.join(parsed_msg[1:])
+            print 'self._current_room = ', self._current_room
+            print 'you have joined ' + room
+
+        print 'leaving parse_incoming'
+
+
+    def prep_message_to_send(self, msg):
+        ready_to_send = msg + ' \r\n'
+        return ready_to_send
+
+if __name__ == '__main__':
+    client = ircClient('127.0.0.1', 5000)
+    print 'calling send_input to join room'
+    client.send_input('/join dude room')
+    
+    while True:
+        print ''
+        print ''
+        print 'in main calling receive_from_server()'
+        client.receive_from_server()
+        print 'in main after calling receive_from_server()'
+        print ''
+        print ''
+        print 'in main calling send_input()'
+        client.send_input('this is a test message')
+        
+
+
+'''
 HOST = '127.0.0.1'#'10.0.0.6'#'24.20.80.232'
 PORT = 5000
 
@@ -31,7 +142,7 @@ except socket.error:
 keyboard_thread = Thread(target=keyboard_input)
 keyboard_thread.daemon = True
 keyboard_thread.start()
-
+'''
 
 ''' Got the keyboard input thread working. Have some concerns over 
 concurrency of the keyboard_buf buffer. May need to use a lock to ensure
@@ -47,7 +158,7 @@ the hostname of the computer as it is waiting on it after the initial
 connection to add to the nickname of the computer.
 
 '''
-
+'''
 while True:
     while True:                         #get any data sent in from the
         chunk = sock.recv(1024)         #server
@@ -64,6 +175,7 @@ while True:
             sent = sock.send(keyboard_buf[total_length:])
             total_sent = total_sent + sent
         keyboard_buf = None
+'''
 '''
 #**
 #This function continuously checks the socket for incoming 

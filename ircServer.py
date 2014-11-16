@@ -5,6 +5,7 @@
 from socket import *
 from select import *
 from threading import *
+import re
 #command definitions:
 #   /nick - alias a name
 #   /list - lists all of the channels
@@ -16,6 +17,30 @@ from threading import *
 # Message format -
 #   current room, [command, [args]* ], text
 
+
+
+#*****************important read me ******************************
+# Last worked:
+# I am experiencing buffering problems where on the client side
+#   its either stacking up in the buffer thats reading or
+#   the socket is repeating the messages.
+#First thing to do is run the program and keep tracking the
+#   error.
+#
+#Needs:
+#  need to figure out a better way to prepare strings for
+#   transmission. They must be delimited with \r\n but im
+#   doing it in many places and its getting confusing. If I have
+#   one function that does it before every send then I can have
+#   the string as normal and then add the delimiter just before
+#   transmission.
+#
+#
+#
+#*****************IMPORTANT**************************************
+# All messages shall be sent as comma seperated values and the
+# message will be delimited with '\r\n'
+#****************************************************************
 class ircServer:
     
     _HOST = ''
@@ -30,8 +55,17 @@ class ircServer:
     _incomingSockets = []
     _outgoingSockets = []
     _errorSockets = []
-   
+
+
+    #ERROR MESSAGES FOR return_err
+    NO_ROOM_ERR = '101_room_error must be in a room to send messages'
+    COMMAND_ERR = '201_command_error : is not a valid command'
+    INCOMING_MSG_CMD = '100_incoming_message'
+    JOIN_ACK = '300_room_joined'
+    JOIN_MSG = 'has joined the room'
+
     def __init__(self, serverPort=5000):
+        print 'in __init__'
         self._PORT = serverPort
         self._masterSocket = socket(AF_INET, SOCK_STREAM)
         self._masterSocket.bind((self._HOST , self._PORT ))
@@ -65,12 +99,13 @@ class ircServer:
     #   it also calls a receive which must carry the hostname of the computer
     #   being logged on by.
     def get_new_connections(self):
+        print 'in get_new_connections'
         to_read, to_write, err = select(self._incomingSockets, self._outgoingSockets, self._errorSockets, 10)
            
         for sock in to_read:
             if sock == self._masterSocket:
                 conn, addr = sock.accept()
-                self._clientSockets[addr] = conn
+                self._clientSockets[addr[0]] = conn
                 hostName = conn.recv(1024)
                 self._clientsNick[addr[0]] = hostName
                 self._listeningSockets.append(conn)
@@ -88,6 +123,7 @@ class ircServer:
         
 
     def get_incoming_messages(self):
+        print 'in get_incoming_messages'
         to_read, to_write, err = select(self._listeningSockets, [], self._listeningSockets, 10)
 
         #if there is any sockets in err
@@ -109,54 +145,125 @@ class ircServer:
             msg.append(addr[0])
             while 1:
                 buf = sock.recv(1024)
-                if buf is not None:
+                #if not buf: break
+                if buf.endswith(u"\r\n"):
                     msg.append(buf)
-                else:
                     break
-            #parse_message(''.join(msg))
+            
+            print 'msg = ', msg
+            self.parse_message(' '.join(msg))
+        print 'leaving get_incoming_messages'
 
 #ended writing the parse message function. Need to finish it and then decide how to handle 
 #   either the command and/or broadcasting the message.
 #   the format I have decided on for the messages are ip addr - current room - then either command/args or text
 #   to broadcast to other users in same room.
     def parse_message(self, msg):
+        print 'in parse_message'
+        print 'msg being parsed = ', msg
         #parsed_msg[0] = ip addr
         #parsed_msg[1] = current room
         #the next parts could be: ([/command (arg)*]?)?(msg)*
         parsed_msg = msg.split()
         command_re = '/.'
+        print 'parsed_mesage after msg.split()' , parsed_msg
         ip = parsed_msg[0]
+        print 'ip = ', ip
         current_room = parsed_msg[1]
-
+        print 'current_room = ', current_room
         #check if not a command then it needs to be broadcast to all of the users in the room
         if not re.match(command_re, parsed_msg[2]):
-            self.broadcast_message(ip, current_room, ''.join(parsed_msg[3:]))
+            if re.match('None', current_room):
+                self.return_err(ip, current_room, self.NO_ROOM_ERR)
+            else:
+                self.broadcast_message(ip, current_room, ' '.join(parsed_msg[3:]))
         else:
             #join a room
             if re.match('/join', parsed_msg[2]):
-                self.join_room(ip, ''.join(parsed_msg[3:]))
-            #leave a room
-            if re.match('/leave', parsed_msg[2]):
+                self.join_room(ip, ' '.join(parsed_msg[3:]))
+            #leave current room
+            elif re.match('/leave', parsed_msg[2]):
                 self.leave_room(ip, current_room)
             #list all available rooms
-            if re.match('/list', parsed_msg[2]):
+            elif re.match('/list', parsed_msg[2]):
                 self.list_rooms(ip, current_room)
             #leave all rooms and remove disconnect user
-            if re.match('/quit', parsed_msg[3]):
+            elif re.match('/quit', parsed_msg[2]):
                 self.purge_user(ip)
-
+            else:
+                #inform user of invalid command
+                self.return_err(ip, current_room, parsed_msg[2] + COMMAND_ERR)
+        print 'leaving parse_message'
     
+    # This function broadcasts the message passed in to all of the other
+    # users in the same room
+    # return codes for client 100_incoming_message
+    def broadcast_message(self, ip, curr_room, msg):
+        print 'in broadcast'
+        '''
+        _clientsNick = dict() #hashes ip's to client nick
+        _clientSockets = dict() #hashes ips to sockets
+        _listeningSockets = [] #all of the sockets to be checked for incoming messages
+        _rooms = dict() # hashes room names to list of ips in room
+        _lobby = [] # list of client ip's that are not in a room. Any message
+                    # input will return an error message until they join a room.
+        '''
+        #get the list of people in the same room
+        message_str = self.INCOMING_MSG_CMD + ' ' + curr_room + ' <' + self._clientsNick[ip] + \
+                        '> ' + msg  
+        room_list = self._rooms[curr_room]
+        #todo: need to check sockets before sending ********
+        message_str_len = len(message_str)
+        message_str = self.prep_message_to_send(message_str)
+        for user in room_list:
+            if user is not ip:
+                sock = self._clientSockets[user]
+                total_sent = 0
+                while total_sent < message_str_len:
+                    sent = sock.send(message_str)
+                    total_sent += sent
+        print 'leaving broadcast'
+    
+    #join_room
+    #this function checks the _rooms data member to see if
+    #the room has been created yet. If not it creates a room and
+    # adds the user to the room. If yes then it adds the user to the
+    # room and broadcasts to all other users that the new user has joined
+    # the room.
+    def join_room(self, ip, msg):
+        print 'in join_room'
+        print 'arg(msg) = ', msg
+        if msg not in self._rooms:
+            self._rooms[msg] = [ip]
+        else:
+            self._rooms[msg].append(ip)
+        self._lobby.remove(ip)
+        sock = self._clientSockets[ip]
+        join_ack = self.prep_message_to_send(self.JOIN_ACK + ' ' + msg)
+        print 'ack to client = ', join_ack
+        sock.sendall(join_ack)
+        self.broadcast_message(ip, msg, self.JOIN_MSG)
+        print 'leaving join_room'        
         
 
-
-        
-
-
-            
-    #def broadcast_message():
     #def join_room(self, room_name):
     #def leave_room():
-    
+    #return_err(ip, current_room, NO_ROOM_ERR)
+
+    def return_err(self, ip, room, error):
+        print 'in return_err method'
+        sock = self._clientSockets[ip]
+        msg = prep_message_to_send(error)
+        print 'message sent = ', msg
+        sock.sendall(msg)
+        print 'leaving return_err method'
+
+    def prep_message_to_send(self, msg):
+        print 'in prep_message_to_send'
+        ready_to_send = msg + ' \r\n'
+        print 'ready_to_send = ', ready_to_send
+        return ready_to_send
+
     def clientSockets_dump(self):
         key_list = self._clientSockets.keys()
         if key_list is None:
@@ -215,10 +322,12 @@ class ircServer:
 
 
 
-    #def run():
-    #    while True:
-    #        get_new_connections()
-
+    def run(self):
+        print 'entering run'
+        while True:
+            self.get_new_connections()
+            self.get_incoming_messages()
+        print 'leaving run'
 
 
 
@@ -227,18 +336,22 @@ if __name__ == '__main__':
     
     
     server = None
+    server = ircServer(5000)
+    server.run()
+    '''
     try:
         server = ircServer(5000)
         try:
             #server.testClientsNickDump()
             #server.testGetNewConnections()
-            server.get_incoming_messages()
+            #server.get_incoming_messages()
+            server.run()
         except:
-            print 'testGetNewConnections error: closing server'
+            print 'server run error: closing server'
             server.close()
     except:
         print 'server cannot be started'
-    
+    '''
 
 
 
