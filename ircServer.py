@@ -35,7 +35,26 @@ import re
 #   the string as normal and then add the delimiter just before
 #   transmission.
 #
+#  11-16-14:
+#   still working on getting the messages passed back and forth
+#   I believe I have them sending from the client correctly but am
+#   having trouble getting each message seperately from the socket.
+#   the messages come across bunched up so the '\r\n' is not at the 
+#   end of the message. I think I will need to keep a buffer for the 
+#   reading and then parse up to the '\r\n'.
 #
+#   So I have added in buffers and out buffers to both the server
+#   and client program. In the Server program I also added a function
+#   called get_next_msg that if the in_buffer has a complete message 
+#   defined as ending in \r\n, it will take it out of the in_buffer
+#   and place it in the out_buffer to be delt with. This function
+#   should be transferable as is to the client program as all buffers
+#   have the same names. This function will be called in the send
+#   functions for passing messages back and fourth between client and 
+#   server. 
+#
+#   Next I need to rework the send_messages and get_messages functions
+#   to work with the new buffers.
 #
 #*****************IMPORTANT**************************************
 # All messages shall be sent as comma seperated values and the
@@ -55,7 +74,8 @@ class ircServer:
     _incomingSockets = []
     _outgoingSockets = []
     _errorSockets = []
-
+    _in_buffer = []
+    _out_buffer = []
 
     #ERROR MESSAGES FOR return_err
     NO_ROOM_ERR = '101_room_error must be in a room to send messages'
@@ -77,8 +97,7 @@ class ircServer:
         self._masterSocket.shutdown(SHUT_RDWR)
 	self._masterSocket.close()
 
-    #def add_client_to_room(clientName, roomName):
-        
+           
     #Searches the clientsNick data member for the clients
     #nickname for the given ip key. Returns none if not in the map.
     def get_client_nick(self,ip):
@@ -112,6 +131,43 @@ class ircServer:
                 self._lobby.append(addr[0])
         print 'exiting get_new_connections'
     
+    #get_next_msg
+    #This function gets the next message from the in buffer concatinates it 
+    # together if necessary and places it out buffer to be processed and 
+    # delt with accordingly.
+    # Returns 0 if buffer is empty or incomplete message, 1 if there was a message
+    def get_next_msg(self):
+        print 'entering get_next_msg()'
+        if self._in_buffer:
+            msg = ''
+            found = False
+            count = 0
+            for chunk in self._in_buffer:
+                print 'chunk = ', chunk
+                ndx = chunk.find('\r\n')
+                print 'ndx = ', ndx
+                if ndx == -1:
+                    msg = msg + ' ' + chunk
+                    count += 1
+                else:
+                    found = True
+                    msg = msg + ' ' + chunk[:ndx+3]
+                    print 'msg = ', msg
+                    chunk = chunk[ndx+4:]
+                    break
+            if found == True:
+                self._in_buffer = self._in_buffer[count+1:]
+                self._out_buffer.append(msg)
+                return 1
+            else:
+                return 0
+        else:
+            return 0
+
+
+
+
+
     def remove_from_all_rooms(self, ip):
         room_lists = self._rooms.values()
         for room in room_lists:
@@ -141,7 +197,7 @@ class ircServer:
 
         for sock in to_read:
             msg = []
-            addr = sock.getpeername()
+            addr = sock.getpeername() #gets the ip and port
             msg.append(addr[0])
             while 1:
                 buf = sock.recv(1024)
@@ -150,8 +206,8 @@ class ircServer:
                     msg.append(buf)
                     break
             
-            print 'msg = ', msg
-            self.parse_message(' '.join(msg))
+            print '\',\'.join(msg) = ', ','.join(msg)
+            self.parse_message(','.join(msg))
         print 'leaving get_incoming_messages'
 
 #ended writing the parse message function. Need to finish it and then decide how to handle 
@@ -164,13 +220,11 @@ class ircServer:
         #parsed_msg[0] = ip addr
         #parsed_msg[1] = current room
         #the next parts could be: ([/command (arg)*]?)?(msg)*
-        parsed_msg = msg.split()
+        parsed_msg = msg.split(',')
+        print 'msg being parsed after split on \',\'', parsed_msg
         command_re = '/.'
-        print 'parsed_mesage after msg.split()' , parsed_msg
         ip = parsed_msg[0]
-        print 'ip = ', ip
         current_room = parsed_msg[1]
-        print 'current_room = ', current_room
         #check if not a command then it needs to be broadcast to all of the users in the room
         if not re.match(command_re, parsed_msg[2]):
             if re.match('None', current_room):
@@ -253,10 +307,11 @@ class ircServer:
     def return_err(self, ip, room, error):
         print 'in return_err method'
         sock = self._clientSockets[ip]
-        msg = prep_message_to_send(error)
+        msg = self.prep_message_to_send(error)
         print 'message sent = ', msg
         sock.sendall(msg)
         print 'leaving return_err method'
+
 
     def prep_message_to_send(self, msg):
         print 'in prep_message_to_send'
@@ -274,6 +329,7 @@ class ircServer:
 
     def clientsNick_dump(self):
         key_list = self._clientsNick.keys()
+        print 'key_list = ', key_list
         if key_list is None:
             print 'empty nickname list'
             return None
@@ -338,6 +394,33 @@ if __name__ == '__main__':
     server = None
     server = ircServer(5000)
     server.run()
+
+    '''
+    #testing get_next_msg()
+    print 'testing empty buffer'
+    retval = server.get_next_msg()
+    print 'retval = ' , retval
+
+    server._in_buffer.append('this is a test')
+    server._in_buffer.append('here is an end \r\n')
+    server._in_buffer.append('this is not ended and will remain')
+    print 'testing filled buffer'
+    print 'in_buffer before get_next_msg = ', server._in_buffer
+    msg = server.get_next_msg()
+    print 'in_buffer after get_next_msg() = ', server._in_buffer
+    print 'out_buffer after get_next_msg() = ', server._out_buffer
+    '''     
+
+
+
+
+
+
+
+
+
+
+
     '''
     try:
         server = ircServer(5000)
