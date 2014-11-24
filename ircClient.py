@@ -22,7 +22,7 @@ class ircClient:
     def __init__(self, server_ip, server_port):
         self._host = server_ip
         self._port = server_port
-        self.nickname = socket.gethostname()
+        self.nickname = '<' + socket.gethostname() + '>'
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             self._sock.connect((self._host, self._port))
@@ -37,22 +37,18 @@ class ircClient:
     # delt with accordingly.
     # Returns 0 if buffer is empty or incomplete message, 1 if there was a message
     def get_next_msg(self):
-        print 'entering get_next_msg()'
         if self._in_buffer:
             msg = ''
             found = False
             count = 0
             for chunk in self._in_buffer:
-                print 'chunk = ', chunk
                 ndx = chunk.find('\r\n')
-                print 'ndx = ', ndx
                 if ndx == -1:
                     msg = msg + ' ' + chunk
                     count += 1
                 else:
                     found = True
                     msg = msg + ' ' + chunk[:ndx+3]
-                    print 'msg = ', msg
                     chunk = chunk[ndx+4:]
                     break
             if found == True:
@@ -63,6 +59,7 @@ class ircClient:
                 return 0
         else:
             return 0
+        
 
 
 
@@ -71,43 +68,38 @@ class ircClient:
     #   'current room' 'messsage'
     # current room may be none
     def send_input(self, msg):
-        #print 'entering send_input'
-        to_read, to_write, err = select([], [self._sock], [], 10)
-        #print 'msg_to_send befor parse_outgoing = ', msg
+        to_read, to_write, err = select([], [self._sock], [], 1)
         msg_to_send = self.parse_outgoing(msg)
         #print 'msg_to_send after parse_outgoing = ', msg_to_send
         msg_to_send = self.prep_message_to_send(msg_to_send)
         #print 'msg_to_send after prep_message_to_send', msg_to_send
+        msg_to_send = self._sock.getsockname()[0] + ',' + msg_to_send
         msg_length = len(msg_to_send)
         total_sent = 0
         if len(to_write) is not 0:
             while total_sent < msg_length:
-                #print 'sending message'
                 sent = self._sock.send(msg_to_send)
                 total_sent = total_sent + sent
-            #print 'message sent'
-        #print 'leaving send_input'
+            
+        
 
     def receive_from_server(self):
-        #print 'entering receive_from_server'
-        to_read, to_write, err = select([self._sock], [], [], 10)
+        to_read, to_write, err = select([self._sock], [], [], 1)
         buf = []
-        if len(to_read) is not 0:
-            count = 0
+        if to_read:
             while True:
                 chunk = self._sock.recv(1024)
-                #print 'chunk = ', [chunk.split('\r\n')], ' count = ' + str(count)
                 if chunk.endswith(u"\r\n"):
-                    buf.append(chunk)
+                    self._in_buffer.append(chunk)
                     break
                 else:
-                    buf.append(chunk)
-                count += 1
+                    if chunk:
+                        self._in_buffer.append(chunk)
 
-            self.parse_incoming(' '.join(buf))
-                   
-        #print 'leaving receive_from_server'
-
+            
+            while self.get_next_msg():
+                self.parse_incoming(self._out_buffer[0].strip())
+                del self._out_buffer[0]   
 
 #The purpose is to determine which command is being sent
 # and to check the correct number of arguments and then 
@@ -116,7 +108,6 @@ class ircClient:
 #regex for commands and args:
 #   /join : '/join .(?!,)'
     def parse_outgoing(self, msg):
-        #print 'in parse_outgoing'
         outgoing = self.none_to_string(self._current_room) # used to convert None to a string if room hasn't been set
         if re.match('/.', msg):
             to_parse = msg.split()
@@ -127,7 +118,6 @@ class ircClient:
                 return None
         else:
             outgoing = outgoing + ',' + msg
-        #print 'leaving parse_outgoing'
         return outgoing
         
 #Function turns the none argument, if it is a Nonetype object, to a string for use in message passing,
@@ -150,41 +140,45 @@ class ircClient:
 #       200_incoming_private            201_command_error
 #       300_room_joined
     def parse_incoming(self, msg):
-        #print 'entering parse_incoming w/ msg = ', msg
-        parsed_msg = msg.split()
+        parsed_msg = msg.split(',')
         code = parsed_msg[0] # get the command code
         room = parsed_msg[1] # get the room
-        if re.match('100.', code):
-            print ' '.join(parsed_msg)
-        elif re.match('300.', code):
+        if len(parsed_msg) > 2:
+            user = parsed_msg[2] # msg from
+        if re.match('100(.)*', code):
+            if parsed_msg[2] is user:
+                print '<me> ' + ' '.join(parsed_msg[3:])
+            else:
+                print ' '.join(parsed_msg[2:])
+            
+        elif re.match('300(.)*', code):
             self._current_room = ' '.join(parsed_msg[1:])
-            #print 'self._current_room = ', self._current_room
             print 'you have joined ' + room
-
-        #print 'leaving parse_incoming'
-
+     
 
     def prep_message_to_send(self, msg):
-        ready_to_send = msg + ' \r\n'
+        if re.match('(.)*\\r\\n$', msg) is None:
+            ready_to_send = msg + ' \r\n'
+        else:
+            ready_to_send = msg
+
         return ready_to_send
+
+    def test_get_next_msg(self):
+        self._in_buffer = ['this is a test \r\n', 'this is another test']
+        self.get_next_msg()
+        print 'in buffer after calling gnm: ', self._in_buffer
+        print 'out buffer after calling gnm: ', self._out_buffer
 
 if __name__ == '__main__':
     client = ircClient('127.0.0.1', 5000)
-
-    #print 'calling send_input to join room'
     client.send_input('/join dude room')
     
     while True:
-    #    print ''
-    #    print ''
-    #    print 'in main calling receive_from_server()'
         client.receive_from_server()
-    #    print 'in main after calling receive_from_server()'
-    #    print ''
-    #    print ''
-    #    print 'in main calling send_input()'
         client.send_input('this is a test message')
-        
+    
+    
     '''
     print "testing parse_outgoing **********"
     msg1 = client.parse_outgoing('/join dude room')
