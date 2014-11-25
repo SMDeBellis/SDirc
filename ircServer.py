@@ -56,6 +56,34 @@ import re
 #   Next I need to rework the send_messages and get_messages functions
 #   to work with the new buffers.
 #
+#   11-24-14:
+#   After a bit of a struggle and confusion, I have gotten message formats 
+#   solidified so that I can pass commands and messages to the server which then
+#   passes back the correct reply/response. I have now completed /join
+#   and broadcast message which passes a message to all of the users
+#   that belong to the room. I still have to test with multiple users.
+#   
+#   TODO:
+#       /nick
+#
+#   Ended at 1:00pm with the ability to change the nickname of the user
+#   Have weird behavior in that it is skipping messages and i'm not sure
+#   if its on the sending side or on the recieving side. More tests are needed.
+#
+#   Ended at 10pm I have reduced the wait on select in both the server and client
+#   program to 1. There still seems to be an occasional problem where it seems t0
+#   miss the join room and then when it goes into change name and then broadcast
+#   there is a none error exception thrown when getting the room list to broadcast.
+#   I also added an extra arg to broadcast so that I could stop self broadcast on
+#   functions that don't need to (join, change_room)
+# 
+#   11-25-14
+#   I have solved the missing log in problem by adding a bit of delay on the
+#   clients side to ensure that they are not sending messages faster than the server can handle
+#
+
+
+
 #*****************IMPORTANT**************************************
 # All incoming messages will be in the form of 
 #       'ip,roomname,msg \r\n'
@@ -82,7 +110,10 @@ class ircServer:
     #ERROR MESSAGES FOR return_err
     NO_ROOM_ERR = '101_room_error must be in a room to send messages'
     COMMAND_ERR = '201_command_error : is not a valid command'
+    DUP_NICK_ERR = '301_command_error : nickname is already taken'
     INCOMING_MSG_CMD = '100_incoming_message'
+    NICK_CHANGE_ACK = '200_nickname_change'
+    NICK_MSG = 'has changed nickname to:'
     JOIN_ACK = '300_room_joined'
     JOIN_MSG = 'has joined the room'
 
@@ -121,8 +152,8 @@ class ircServer:
     #   being logged on by.
     def get_new_connections(self):
         #print 'in get_new_connections'
-        to_read, to_write, err = select(self._incomingSockets, self._outgoingSockets, self._errorSockets, 10)
-           
+        to_read, to_write, err = select(self._incomingSockets, self._outgoingSockets, self._errorSockets, 1)
+
         for sock in to_read:
             if sock == self._masterSocket:
                 conn, addr = sock.accept()
@@ -135,6 +166,8 @@ class ircServer:
         #print 'exiting get_new_connections'
     
     #get_next_msg
+    #This function must move msgs from the in_buffer to the out_buffer and
+    #   then signal if at least one msg has been moved
     #This function gets the next message from the in buffer concatinates it 
     # together if necessary and places it out buffer to be processed and 
     # delt with accordingly.
@@ -186,10 +219,10 @@ class ircServer:
         self.remove_from_all_rooms(ip)
         del self._clientNick[ip]
         
-
+    
     def get_incoming_messages(self):
         to_read, to_write, err = select(self._listeningSockets, [], self._listeningSockets, 1)
-
+        
         #if there is any sockets in err
             #-get the sockets ip address
             #-remove ip from all rooms
@@ -207,6 +240,7 @@ class ircServer:
             try:
                 buf = sock.recv(1024)
             except:
+                print 'breaking in get_incoming connection due to exception'
                 break
             if buf:#without this empty string was going into buffer
                 self._in_buffer.append(buf)
@@ -223,10 +257,12 @@ class ircServer:
 #   either the command and/or broadcasting the message.
 #   the format I have decided on for the messages are ip addr - current room - then either command/args or text
 #   to broadcast to other users in same room.
+#   ****ALL ERROR FUNCTIONS MUST be in the form of error, room name, msg*****
     def parse_message(self, msg):
         #parsed_msg[0] = ip addr
         #parsed_msg[1] = current room
         #the next parts could be: ([/command (arg)*]?)?(msg)*
+        print 'in parse message msg = ', msg
         parsed_msg = msg.split(',')
         command_re = '/.'
         ip = parsed_msg[0]
@@ -239,11 +275,18 @@ class ircServer:
             else:
                 
                 msg_to_send = ' '.join(parsed_msg[2:])
-                self.broadcast_message(ip, current_room, msg_to_send.strip())
+                self.broadcast_message(ip, current_room, msg_to_send.strip(), 0)
         else:
             #join a room
+            #should come from client as:
+                #ip,currentRoom,command,roomToJoin \r\n
             if re.match('/join', parsed_msg[2]):
                 self.join_room(ip, self.strip_delimiter(','.join(parsed_msg[3:])))
+            #change nickname
+            #should come from client as:
+                #ip,currentRoom,command,newNick \r\n
+            elif re.match('/nick', parsed_msg[2]):
+                self.change_nickname(ip, current_room, self.strip_delimiter(','.join(parsed_msg[3:])))
             #leave current room
             elif re.match('/leave', parsed_msg[2]):
                 self.leave_room(ip, current_room)
@@ -261,7 +304,7 @@ class ircServer:
     # This function broadcasts the message passed in to all of the other
     # users in the same room
     # return codes for client 100_incoming_message
-    def broadcast_message(self, ip, curr_room, msg):
+    def broadcast_message(self, ip, curr_room, msg, flag):
         #print 'in broadcast'
         #print 'msg = ', msg
         '''
@@ -279,7 +322,8 @@ class ircServer:
         message_str_len = len(message_str)
         message_str = self.prep_message_to_send(message_str)
         for user in room_list:
-            if user is not ip:
+            if user != ip or flag == 0:
+                print 'user and ip', user, ip
                 sock = self._clientSockets[user]
                 total_sent = 0
                 while total_sent < message_str_len:
@@ -293,6 +337,7 @@ class ircServer:
     # adds the user to the room. If yes then it adds the user to the
     # room and broadcasts to all other users that the new user has joined
     # the room.
+    # TODO: need to make sure user cannot join the same room multiple times
     def join_room(self, ip, msg):
         if msg not in self._rooms:
             self._rooms[msg] = [ip]
@@ -301,19 +346,35 @@ class ircServer:
         self._lobby.remove(ip)
         sock = self._clientSockets[ip]
         join_ack = self.prep_message_to_send(self.JOIN_ACK + ',' + msg)
+        print 'join_ack = ', join_ack
         sock.sendall(join_ack)
-        self.broadcast_message(ip, msg, self.JOIN_MSG)
-                
-        
+        self.broadcast_message(ip, msg, self.JOIN_MSG, 1)
+    
+    
 
-    #def join_room(self, room_name):
+    def change_nickname(self, ip, room, new_name):
+        print 'in change_nickname room = ', room 
+        all_nicks = self._clientsNick.values()
+        if new_name in all_nicks:
+            self.return_err(ip, room, self.DUP_NICK_ERR)
+        else:
+            old_nick = self._clientsNick[ip]
+            self._clientsNick[ip] = new_name
+            nick_ack = self.prep_message_to_send(self.NICK_CHANGE_ACK + ',' + new_name)
+            sock = self._clientSockets[ip]
+            sock.sendall(nick_ack)
+            if room is 'None':
+                self.broadcast_message(ip, room, old_nick + ' ' + self.NICK_MSG + ' ' + new_name, 1)
+
+
+    
     #def leave_room():
     #return_err(ip, current_room, NO_ROOM_ERR)
 
     def return_err(self, ip, room, error):
         #print 'in return_err method'
         sock = self._clientSockets[ip]
-        msg = self.prep_message_to_send(error)
+        msg = self.prep_message_to_send(error + ',' + room)
         #print 'message sent = ', msg
         sock.sendall(msg)
         #print 'leaving return_err method'
@@ -389,6 +450,7 @@ class ircServer:
 
     def run(self):
         print 'entering run'
+        count = 0
         while True:
             self.get_new_connections()
             self.get_incoming_messages()

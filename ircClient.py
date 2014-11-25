@@ -8,6 +8,7 @@ import socket
 import sys
 import re
 from select import *
+from time import sleep
 
 class ircClient:
     _host = None
@@ -18,6 +19,7 @@ class ircClient:
     _in_buffer = []
     _out_buffer = []
     _sock = None
+    
 
     def __init__(self, server_ip, server_port):
         self._host = server_ip
@@ -26,6 +28,7 @@ class ircClient:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             self._sock.connect((self._host, self._port))
+            self._sock.setblocking(0)
         except socket.error:
             sys.exit(socket.error[1])
         self._sock.sendall(self.nickname)
@@ -65,17 +68,26 @@ class ircClient:
 
 
     # messages must be sent to server in this format:
-    #   'current room' 'messsage'
+    #    'ip','current room','messsage \r\n'
     # current room may be none
+    # it is the responsibility of the parse_outgoing function
+    #   to handle all error output as this function will not
+    #   send if parse_outgoing returns none.
     def send_input(self, msg):
         to_read, to_write, err = select([], [self._sock], [], 1)
+
+        #may be able to move this chunk of code above select()
+        #   as select will be unneccessary if parsing returns none
         msg_to_send = self.parse_outgoing(msg)
-        #print 'msg_to_send after parse_outgoing = ', msg_to_send
+        if not msg_to_send:
+            return 1
+        
         msg_to_send = self.prep_message_to_send(msg_to_send)
-        #print 'msg_to_send after prep_message_to_send', msg_to_send
+        
         msg_to_send = self._sock.getsockname()[0] + ',' + msg_to_send
         msg_length = len(msg_to_send)
         total_sent = 0
+        
         if len(to_write) is not 0:
             while total_sent < msg_length:
                 sent = self._sock.send(msg_to_send)
@@ -84,7 +96,8 @@ class ircClient:
         
 
     def receive_from_server(self):
-        to_read, to_write, err = select([self._sock], [], [], 1)
+        to_read, to_write, err = select([self._sock], [], [], 5)
+       
         buf = []
         if to_read:
             while True:
@@ -96,8 +109,8 @@ class ircClient:
                     if chunk:
                         self._in_buffer.append(chunk)
 
-            
             while self.get_next_msg():
+                #print 'going into pare_incoming = ', self._out_buffer[0].strip()
                 self.parse_incoming(self._out_buffer[0].strip())
                 del self._out_buffer[0]   
 
@@ -110,11 +123,22 @@ class ircClient:
     def parse_outgoing(self, msg):
         outgoing = self.none_to_string(self._current_room) # used to convert None to a string if room hasn't been set
         if re.match('/.', msg):
-            to_parse = msg.split()
+            to_parse = msg.split() # should be /cmd [str]*
+            length = len(to_parse)
             if re.match('^/join ((?!,).)*$', msg): 
-                outgoing = outgoing + ',' + to_parse[0] + ',' + ' '.join(to_parse[1:])
+                if length > 1:
+                    outgoing = outgoing + ',' + to_parse[0] + ',' + ' '.join(to_parse[1:])
+                else:
+                    print '<me> Invalid: /join needs a roomname'
+                    return None
+            elif re.match('^/nick ((?!,).)*$', msg):
+                if length > 1:
+                    outgoing = outgoing + ',' + to_parse[0] + ',' + ' '.join(to_parse[1:])
+                else:
+                    print '<me> Invalid: /nick needs a name'
+                    return None
             else:
-                print 'Invalid: /join needs a roomname'
+                print '<me> Invalid command'
                 return None
         else:
             outgoing = outgoing + ',' + msg
@@ -153,7 +177,12 @@ class ircClient:
             
         elif re.match('300(.)*', code):
             self._current_room = ' '.join(parsed_msg[1:])
-            print 'you have joined ' + room
+            print '<me> you have joined ' + room
+
+        elif re.match('200(.)*', code):
+            new_nick = ' '.join(parsed_msg[1:])
+            print '<me> nickname changed to ' + new_nick
+            self._nickname = new_nick
      
 
     def prep_message_to_send(self, msg):
@@ -171,13 +200,41 @@ class ircClient:
         print 'out buffer after calling gnm: ', self._out_buffer
 
 if __name__ == '__main__':
+    
     client = ircClient('127.0.0.1', 5000)
+    sleep(5)
+
     client.send_input('/join dude room')
+    client.receive_from_server()
+
+    sleep(1)
+
+   
+    client.send_input('/nick jimmy')
+    client.receive_from_server()
+
+    sleep(1)
+    client.send_input('special message')
     
     while True:
         client.receive_from_server()
+
+        sleep(1)
         client.send_input('this is a test message')
-    
+        client.receive_from_server()
+
+        sleep(1)
+        client.send_input('/nick dave')
+        client.receive_from_server()
+
+        sleep(1)
+        client.send_input('this is another test message')
+        client.receive_from_server()
+
+        sleep(1)
+
+        client.send_input('/nick jimmy')
+        
     
     '''
     print "testing parse_outgoing **********"
