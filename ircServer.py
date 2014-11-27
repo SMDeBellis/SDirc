@@ -80,10 +80,31 @@ import re
 #   11-25-14
 #   I have solved the missing log in problem by adding a bit of delay on the
 #   clients side to ensure that they are not sending messages faster than the server can handle
+#a  Have got the server and one client working with the configuration:
+#   Config 1
+#       Server : select 10, select 10 , socket nonblocking
+#       Client : select 10, select 10 , socket nonblocking
+#       Outcome Successful
+#   Config 2
+#       Server : select 10, select 10, socket nonblocking
+#       Client : select 8,  select 8,  socket nonblocking
+#       Outcome Failed
+#   Config 3
+#       Server: select 8, select 8, socket nonblocking
+#       Client: select 8, select 8, socket nonblocking
+#       Outcome Successful
+#   Config 4
+#       Server: select 1, select 1, socket nonblocking
+#       Server: select 1, select 1, socket nonblocking
+#       Outcome Successful but only with one client
 #
-
-
-
+#   It seems that with one client the server is in sync with it and
+#   the timing is correct but once you throw a second one in it starts
+#   losing messages. It could be because I have the loops in each of the 
+#   clients the same. I may just impliment the keyboard input on the client
+#   and then see if that solves the problem.
+#
+#
 #*****************IMPORTANT**************************************
 # All incoming messages will be in the form of 
 #       'ip,roomname,msg \r\n'
@@ -152,17 +173,17 @@ class ircServer:
     #   being logged on by.
     def get_new_connections(self):
         #print 'in get_new_connections'
-        to_read, to_write, err = select(self._incomingSockets, self._outgoingSockets, self._errorSockets, 1)
+        to_read, to_write, err = select(self._incomingSockets, self._outgoingSockets, self._errorSockets, 10)
 
         for sock in to_read:
             if sock == self._masterSocket:
                 conn, addr = sock.accept()
                 conn.setblocking(0)
-                self._clientSockets[addr[0]] = conn
+                self._clientSockets[str(addr[1])] = conn
                 hostName = conn.recv(1024)
-                self._clientsNick[addr[0]] = hostName
+                self._clientsNick[str(addr[1])] = hostName
                 self._listeningSockets.append(conn)
-                self._lobby.append(addr[0])
+                self._lobby.append(str(addr[1]))
         #print 'exiting get_new_connections'
     
     #get_next_msg
@@ -221,7 +242,7 @@ class ircServer:
         
     
     def get_incoming_messages(self):
-        to_read, to_write, err = select(self._listeningSockets, [], self._listeningSockets, 1)
+        to_read, to_write, err = select(self._listeningSockets, [], self._listeningSockets, 10)
         
         #if there is any sockets in err
             #-get the sockets ip address
@@ -232,7 +253,7 @@ class ircServer:
 
         for sock in err:
             addr = sock.getpeername()
-            self.remove_client(addr[0])
+            self.remove_client(addr[1])
             self._lobby.remove(sock)
             self._listeningSockets.remove(sock)
 
@@ -348,7 +369,8 @@ class ircServer:
         join_ack = self.prep_message_to_send(self.JOIN_ACK + ',' + msg)
         print 'join_ack = ', join_ack
         sock.sendall(join_ack)
-        self.broadcast_message(ip, msg, self.JOIN_MSG, 1)
+        join_relay = self._clientsNick[ip] + ' ' + self.JOIN_MSG
+        self.broadcast_message(ip, msg, join_relay, 1)
     
     
 

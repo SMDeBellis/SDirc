@@ -74,7 +74,7 @@ class ircClient:
     #   to handle all error output as this function will not
     #   send if parse_outgoing returns none.
     def send_input(self, msg):
-        to_read, to_write, err = select([], [self._sock], [], 1)
+        to_read, to_write, err = select([], [self._sock], [], 10)
 
         #may be able to move this chunk of code above select()
         #   as select will be unneccessary if parsing returns none
@@ -84,7 +84,7 @@ class ircClient:
         
         msg_to_send = self.prep_message_to_send(msg_to_send)
         
-        msg_to_send = self._sock.getsockname()[0] + ',' + msg_to_send
+        msg_to_send = str(self._sock.getsockname()[1]) + ',' + msg_to_send
         msg_length = len(msg_to_send)
         total_sent = 0
         
@@ -92,11 +92,11 @@ class ircClient:
             while total_sent < msg_length:
                 sent = self._sock.send(msg_to_send)
                 total_sent = total_sent + sent
-            
+        sleep(1)       
         
 
     def receive_from_server(self):
-        to_read, to_write, err = select([self._sock], [], [], 5)
+        to_read, to_write, err = select([self._sock], [], [], 10)
        
         buf = []
         if to_read:
@@ -170,10 +170,10 @@ class ircClient:
         if len(parsed_msg) > 2:
             user = parsed_msg[2] # msg from
         if re.match('100(.)*', code):
-            if parsed_msg[2] is user:
+            if self._nickname == user:
                 print '<me> ' + ' '.join(parsed_msg[3:])
             else:
-                print ' '.join(parsed_msg[2:])
+                print '<' + user + '>' + ' '.join(parsed_msg[3:])
             
         elif re.match('300(.)*', code):
             self._current_room = ' '.join(parsed_msg[1:])
@@ -202,36 +202,32 @@ class ircClient:
 if __name__ == '__main__':
     
     client = ircClient('127.0.0.1', 5000)
-    sleep(5)
 
     client.send_input('/join dude room')
     client.receive_from_server()
 
-    sleep(1)
 
    
     client.send_input('/nick jimmy')
     client.receive_from_server()
 
-    sleep(1)
     client.send_input('special message')
     
     while True:
         client.receive_from_server()
 
-        sleep(1)
+        
         client.send_input('this is a test message')
         client.receive_from_server()
 
-        sleep(1)
+        
         client.send_input('/nick dave')
         client.receive_from_server()
 
-        sleep(1)
+    
         client.send_input('this is another test message')
         client.receive_from_server()
 
-        sleep(1)
 
         client.send_input('/nick jimmy')
         
