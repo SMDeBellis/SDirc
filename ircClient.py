@@ -1,6 +1,7 @@
 #!/etc/python
 #Sean DeBellis copyright 2014
 #IRC Program for cs494
+#Client program
 
 from threading import *
 import errno
@@ -13,24 +14,27 @@ from time import sleep
 class ircClient:
     _host = None
     _port = None
-    _nickname = None 
-    _current_room = None
-    _room_list = []
-    _in_buffer = []
+    _nickname = None            #current nickname of user
+    _current_room = None        #current room of the user
+    _room_list = []             #stores all of the rooms that the user belongs to
+    _previous_room_stack = []   #a backstack to store the order of rooms visited
+    _in_buffer = []             
     _out_buffer = []
     _sock = None
     
 
+
     def __init__(self, server_ip, server_port):
         self._host = server_ip
         self._port = server_port
-        self.nickname = '<' + socket.gethostname() + '>'
+        self.nickname = socket.gethostname()
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             self._sock.connect((self._host, self._port))
             self._sock.setblocking(0)
         except socket.error:
             sys.exit(socket.error[1])
+        print 'Connected to Server'
         self._sock.sendall(self.nickname)
 
 
@@ -64,9 +68,6 @@ class ircClient:
             return 0
         
 
-
-
-
     # messages must be sent to server in this format:
     #    'ip','current room','messsage \r\n'
     # current room may be none
@@ -74,7 +75,7 @@ class ircClient:
     #   to handle all error output as this function will not
     #   send if parse_outgoing returns none.
     def send_input(self, msg):
-        to_read, to_write, err = select([], [self._sock], [], 10)
+        to_read, to_write, err = select([], [self._sock], [], 1)
 
         #may be able to move this chunk of code above select()
         #   as select will be unneccessary if parsing returns none
@@ -96,12 +97,16 @@ class ircClient:
         
 
     def receive_from_server(self):
-        to_read, to_write, err = select([self._sock], [], [], 10)
+        to_read, to_write, err = select([self._sock], [], [], 1)
        
         buf = []
         if to_read:
             while True:
                 chunk = self._sock.recv(1024)
+                if chunk == '':                                    #to handle server disconnects
+                    print 'server not responding: please reconnect'
+                    sys.exit(1)
+
                 if chunk.endswith(u"\r\n"):
                     self._in_buffer.append(chunk)
                     break
@@ -110,16 +115,13 @@ class ircClient:
                         self._in_buffer.append(chunk)
 
             while self.get_next_msg():
-                #print 'going into pare_incoming = ', self._out_buffer[0].strip()
                 self.parse_incoming(self._out_buffer[0].strip())
                 del self._out_buffer[0]   
 
-#The purpose is to determine which command is being sent
-# and to check the correct number of arguments and then 
-# comma seperate them.
 
-#regex for commands and args:
-#   /join : '/join .(?!,)'
+    #The purpose is to determine which command is being sent
+    # and to check the correct number of arguments and then 
+    # comma seperate them.
     def parse_outgoing(self, msg):
         outgoing = self.none_to_string(self._current_room) # used to convert None to a string if room hasn't been set
         if re.match('/.', msg):
@@ -137,13 +139,45 @@ class ircClient:
                 else:
                     print '<me> Invalid: /nick needs a name'
                     return None
+            elif re.match('^/list( (?!,)*)*$', msg):
+                    outgoing = outgoing + ',' + msg
+            elif re.match('^/leave(.(?!,)*)*$', msg):
+                if length > 1:
+                    print '<me> Invalid: /leave takes no arguments'
+                    return None
+                else:
+                    if self._previous_room_stack:
+                        outgoing = outgoing + ',' + msg
+                    else:
+                        print '<me> Invalid: must be in a room to leave'
+                        return None
+            elif re.match('/quit( (?!,)*)*', msg):
+                if length > 1:
+                    print '<me> Invalid: /quit takes no arguments'
+                    return None
+                else:
+                    outgoing = outgoing + ',' + msg 
+            elif re.match('/members( (?!,)*)*', msg):
+                if self._current_room is None:
+                    print '<me> Invalid: must be in a room to view members'
+                    return None
+                elif length > 1:
+                    print '<me> Invalid: /member takes no arguments'
+                    return None
+                else:
+                    outgoing = outgoing + ',' + msg
             else:
                 print '<me> Invalid command'
                 return None
         else:
-            outgoing = outgoing + ',' + msg
+            if self._current_room is None:
+                print '<me> Invalid: must be in a room to send messages'
+                return None
+            else:
+                outgoing = outgoing + ',' + msg
         return outgoing
-        
+    
+
 #Function turns the none argument, if it is a Nonetype object, to a string for use in message passing,
 # else it just returns the argument.
     def none_to_string(self, none):
@@ -176,15 +210,52 @@ class ircClient:
                 print '<' + user + '>' + ' '.join(parsed_msg[3:])
             
         elif re.match('300(.)*', code):
-            self._current_room = ' '.join(parsed_msg[1:])
+            self._previous_room_stack.append(self._current_room)
+            self._current_room = room
+            self._room_list.append(room)
             print '<me> you have joined ' + room
+        
+        elif re.match('301(.)*', code):
+            print '<me> nickname already taken' 
 
         elif re.match('200(.)*', code):
             new_nick = ' '.join(parsed_msg[1:])
             print '<me> nickname changed to ' + new_nick
             self._nickname = new_nick
-     
-
+        elif re.match('400(.)*', code):
+            label_str = 'CURRENT ROOM LIST: '
+            room_list = parsed_msg[2:]
+            print label_str
+            if room_list[0] is 'None':
+                print 'No Rooms Available'
+            else:
+                for room in room_list:
+                    print room
+        elif re.match('500(.)*', code):
+            print '<me> left', room
+            self._room_list.remove(room)
+            if self._previous_room_stack:
+                self._current_room = self._previous_room_stack.pop()
+            else:
+                self._current_room = None
+            if self._current_room is None:
+                print '<me> In Lobby: use /join command to join room'
+            else:
+                print '<me> In', self._current_room
+        elif re.match('700(.)*', code):
+            label_str = 'Members In Room: ' 
+            user_list = parsed_msg[2:]
+            print label_str
+            if user_list[0] is 'None':
+                print self._nickname
+            else:
+                for user in user_list:
+                    print user
+             
+    
+    
+    #appends delimiting string to arg passed in for sending to server in correct
+    #   format
     def prep_message_to_send(self, msg):
         if re.match('(.)*\\r\\n$', msg) is None:
             ready_to_send = msg + ' \r\n'
@@ -193,16 +264,56 @@ class ircClient:
 
         return ready_to_send
 
-    def test_get_next_msg(self):
-        self._in_buffer = ['this is a test \r\n', 'this is another test']
-        self.get_next_msg()
-        print 'in buffer after calling gnm: ', self._in_buffer
-        print 'out buffer after calling gnm: ', self._out_buffer
+    
+    #check the standard input socket to see if user has input any character
+    #   if so read and return the string
+    def get_user_input(self):
+        rlist, wlist, errlist = select([sys.stdin], [], [], 1)
+        if rlist:
+            user_input = sys.stdin.readline()
+            return user_input
+        else:
+            return None
+
+    
+    # main program loop to which gets user input, sends to server and retreives
+    #   messages from the server
+    def run(self):
+        while True:
+            #try:
+            string = self.get_user_input()
+            if string != None:
+                self.send_input(string)
+                if string.strip() == '/quit':
+                    break
+            self.receive_from_server()
+            #except:
+            #    print 'exception found in run'
+            #    self._sock.close()
+            #    return
+        self._sock.close()
+        print '<me> goodbye'
+            
+
 
 if __name__ == '__main__':
     
     client = ircClient('127.0.0.1', 5000)
+    client.run()
+    sys.exit(0)
 
+######################end of program##############################
+
+    
+    
+    
+    
+    
+    
+    
+#####################Test code##################################    
+    
+    '''
     client.send_input('/join dude room')
     client.receive_from_server()
 
@@ -230,8 +341,61 @@ if __name__ == '__main__':
 
 
         client.send_input('/nick jimmy')
-        
+    '''
+    '''
+    #testing get_user_input
+    while 1:
+        string = client.get_user_input()
+        if string is None:
+            print 'no user input'
+        else:
+            print 'user input is: ', string
+        sleep(5)
+    '''
+    '''
+    #testing /list
+    client.send_input('/nick Charlie Day')
+    client.receive_from_server()
+    sleep(1)
+
+    client.send_input('/join Dude Room')
+    client.receive_from_server()
+    sleep(1)
     
+    client.send_input('/join Huge Room')
+    client.receive_from_server()
+    sleep(1)
+    
+    client.send_input('/join Small Room')
+    client.receive_from_server()
+    sleep(1)
+
+    client.send_input('/join Foot Room')
+    client.receive_from_server()
+    sleep(1)
+   
+    
+    client.send_input('/list')
+    client.receive_from_server()
+    
+    #testing /leave
+    client.send_input('/leave')
+    client.receive_from_server()
+    sleep(1)
+    client.send_input('/leave this room')
+    client.receive_from_server()
+    sleep(1)
+    client.send_input('/leave')
+    client.receive_from_server()
+    sleep(1)
+    client.send_input('/leave another room')
+    client.receive_from_server()
+    sleep(1)
+    client.send_input('/leave')
+    client.receive_from_server()
+    sleep(1)
+    '''
+
     '''
     print "testing parse_outgoing **********"
     msg1 = client.parse_outgoing('/join dude room')
