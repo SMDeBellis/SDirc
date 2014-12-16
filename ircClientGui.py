@@ -3,8 +3,9 @@
 import curses
 from threading import *
 import time
-import select
 import sys
+
+#Gui for sdirc program
 
 class interface:
     INPUT_HEIGHT = 1
@@ -13,6 +14,7 @@ class interface:
     DISPLAY_WIDTH = 1000
     in_buffer = []
     rooms = dict()
+    room_stack = []   
     
 
 
@@ -34,9 +36,6 @@ class interface:
         self.display_pad_size_y = self.DISPLAY_HEIGHT
         self.display_pad_size_x = self.DISPLAY_WIDTH
         
-        self.input_pad = curses.newpad(10, 100)
-        self.input_pad_count = 0
-    
         self.prompt = 'command-> '
         self.cursor_limit_left = len(self.prompt) + 1
         self.cursor_limit_right = self.main_win_size_x - 1
@@ -45,7 +44,17 @@ class interface:
         input_thread = Thread(target=self.keyboard_input)
         input_thread.daemon = True
         input_thread.start()
+    
+        self.current_room = None
 
+    #function to be used in thread to read input from the keyboard and 
+    #   then send input line to input buffer for displaying to the screen.
+    #Issues:
+    #   -Need to figure out how to handle handing the input string to the
+    #   using program for use in its methods. Possible have a get_input
+    #   method that passes the input from the buffer to the user for
+    #   processing and then they would pass into the post_to_room function
+    #   -Need to deal with non-letter/number/punctuation input
     def keyboard_input(self):
         string = ''
         while True:
@@ -54,35 +63,51 @@ class interface:
                 if c == '\n':
                     self.in_buffer.append(string)
                     string = ''
-                    #self.main_win.addstr(10,10, string)
                 else:
                     string = string + c
             except:
                 pass
         
-            
-
-
-
-   
-    #creates a new pad for the room_name
-
-    def draw_screen(self, room_name):
+    #method - refreshes the screen first clearing the main window, redraws the border, 
+    #   then redraw the Room Label, then output any text to the screen that exists
+    #   in the current room if valid. Then redraws the user prompt and positions the cursor.
+    def draw_screen(self):
         self.main_win.clear()
         self.main_win.box()
-        self.main_win.addstr(2,2, room_name)
+        if self.current_room:
+            self.main_win.addstr(2, (self.main_win_size_x/2) - (len(self.current_room)/2), self.current_room)
+            self.refresh_current_room()
+        else:
+            self.main_win.addstr(2, (self.main_win_size_x/2) - (len('lobby')/2), 'Lobby')
         self.main_win.hline(self.main_win_size_y - 3, 1, curses.ACS_BSBS, self.main_win_size_x - 2)
         self.main_win.addstr(self.main_win_size_y - 2, 1, self.prompt)
         self.main_win.move(self.cursor_pos_y, self.cursor_limit_left)
-        #self.main_win.refresh()
     
-
-
-    def create_room(self, room_name):
-        room_pad = curses.newpad(self.display_pad_size_y, self.display_pad_size_x)
-        num_msgs = 0
-        self.rooms[room_name] = (room_pad, num_msgs)
+    #method - redraws to the screen the content of the current room overlaying
+    #   it on the main screen.
+    def refresh_current_room(self):
+        room = self.rooms[self.current_room]
         
+        #redraw the current room if possible. Exception is thrown when the room is new and
+        #   has nothing to draw to the screen. In that case we can just pass as it doesn't
+        #   have any effect on the screen.
+        try:
+            room[0].overlay(self.main_win,2,2,3,2,room[1], self.main_win_size_x - 10)
+        except:
+            pass
+
+    
+    def create_room(self, room_name):
+        rooms = self.rooms.keys()
+        if room_name not in rooms:
+            room_pad = curses.newpad(self.display_pad_size_y, self.display_pad_size_x)
+            num_msgs = 2
+            self.rooms[room_name] = (room_pad, num_msgs)
+            self.current_room = room_name
+            self.room_stack.append(room_name)       
+            self.draw_screen()
+
+#    def leave_room(self, room_name):
 
     def get_user_input(self):
         string = ''
@@ -94,16 +119,12 @@ class interface:
             return None        
        
 
-
-    def post_to_room(self, current_room, room_to_post, msg):
+    def post_to_room(self, room_to_post, msg):
         #post message to display_pad corresponding to room_name
         room = self.rooms[room_to_post]
-        room[0].addstr(room[1], 0, msg)
+        room[0].addstr(room[1], 2, msg)
         i = 1 + room[1] 
         self.rooms[room_to_post] = (room[0], i)
-        if room_to_post == current_room:
-            room[0].noutrefresh(0,0,10,0,room[1],self.main_win_size_x)
-        #if room_name is the current_room name redraw pad to screen
 
 
     def switch_room(self):
@@ -120,20 +141,28 @@ class interface:
 if __name__ == '__main__':
 
         gui = interface()
-        gui.draw_screen('')
         gui.create_room('dude room')
         time.sleep(.02)
         while True:
             string = gui.get_user_input()
             if string != None:
                 if string == 'quit':
-                    gui.draw_screen('good bye')
                     time.sleep(.2)
                     break
-                gui.post_to_room('dude room', 'dude room', string)
-                gui.draw_screen('dude room')
-                #time.sleep(2)
-            
+                gui.post_to_room('dude room', string)
+                gui.draw_screen()
+        
+        gui.create_room('beef room')
+
+        while True:
+            string = gui.get_user_input()
+            if string != None:
+                if string == 'quit':
+                    time.sleep(.2)
+                    break
+                gui.post_to_room('beef room', string)
+                gui.draw_screen()
+
 
         gui.close_interface()
         
