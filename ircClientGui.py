@@ -107,7 +107,18 @@ class interface:
             self.room_stack.append(room_name)       
             self.draw_screen()
 
-#    def leave_room(self, room_name):
+    def leave_room(self, room_name):
+        rooms = self.rooms.keys()
+        if room_name in rooms:
+            room = self.rooms[room_name]
+            del self.rooms[room_name]
+            self.room_stack.remove(room_name)
+
+    def switch_room(self, room_name):
+        #rooms = self.rooms.keys()
+        #if room_name in rooms:
+        self.current_room = room_name
+            #self.draw_screen()
 
     def get_user_input(self):
         string = ''
@@ -127,9 +138,6 @@ class interface:
         self.rooms[room_to_post] = (room[0], i)
 
 
-    def switch_room(self):
-        pass
-
     def refresh_display(self):
         #redraw the current rooms display
         pass
@@ -139,7 +147,9 @@ class interface:
         curses.endwin()
 
 if __name__ == '__main__':
-
+#Having trouble with switch, not sure where the problems are
+#   I need to to create test functions that to determine what being stored in the
+#   rooms and current_room and room_stack variable.
         gui = interface()
         gui.create_room('dude room')
         time.sleep(.02)
@@ -163,6 +173,16 @@ if __name__ == '__main__':
                 gui.post_to_room('beef room', string)
                 gui.draw_screen()
 
+        gui.switch_room('dude_room')  
+        gui.draw_screen()
+        while True:
+            string = gui.get_user_input()
+            if string != None:
+                if string == 'quit':
+                    time.sleep(.2)
+                    break
+                gui.post_to_room('dude room', string)
+                gui.draw_screen()
 
         gui.close_interface()
         
