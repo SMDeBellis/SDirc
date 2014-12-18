@@ -14,7 +14,6 @@ class interface:
     DISPLAY_WIDTH = 1000
     in_buffer = []
     rooms = dict()
-    room_stack = []   
     
 
 
@@ -45,7 +44,9 @@ class interface:
         input_thread.daemon = True
         input_thread.start()
     
-        self.current_room = None
+        self.current_room = 'Lobby'
+        self.create_room(self.current_room)
+        self.draw_screen()
 
     #function to be used in thread to read input from the keyboard and 
     #   then send input line to input buffer for displaying to the screen.
@@ -104,7 +105,6 @@ class interface:
             num_msgs = 2
             self.rooms[room_name] = (room_pad, num_msgs)
             self.current_room = room_name
-            self.room_stack.append(room_name)       
             self.draw_screen()
 
     def leave_room(self, room_name):
@@ -112,7 +112,7 @@ class interface:
         if room_name in rooms:
             room = self.rooms[room_name]
             del self.rooms[room_name]
-            self.room_stack.remove(room_name)
+            
 
     def switch_room(self, room_name):
         #rooms = self.rooms.keys()
@@ -132,61 +132,49 @@ class interface:
 
     def post_to_room(self, room_to_post, msg):
         #post message to display_pad corresponding to room_name
+        if room_to_post is None:
+            room_to_post = 'Lobby'
         room = self.rooms[room_to_post]
         room[0].addstr(room[1], 2, msg)
         i = 1 + room[1] 
         self.rooms[room_to_post] = (room[0], i)
 
 
-    def refresh_display(self):
-        #redraw the current rooms display
-        pass
-
     def close_interface(self):
         curses.echo()
         curses.endwin()
 
+'''    
 if __name__ == '__main__':
 #Having trouble with switch, not sure where the problems are
 #   I need to to create test functions that to determine what being stored in the
 #   rooms and current_room and room_stack variable.
+        
         gui = interface()
+        gui.create_room('beef room')
         gui.create_room('dude room')
+        current_room = 'dude room'
         time.sleep(.02)
         while True:
             string = gui.get_user_input()
             if string != None:
                 if string == 'quit':
                     time.sleep(.2)
-                    break
-                gui.post_to_room('dude room', string)
+                    break 
+                if string == 'switch':
+                    if current_room == 'dude room':
+                        gui.switch_room('beef room')
+                        current_room = 'beef room'
+                    else:
+                        gui.switch_room('dude room')
+                        current_room = 'dude room'
+                gui.post_to_room(current_room, string)
                 gui.draw_screen()
         
-        gui.create_room('beef room')
-
-        while True:
-            string = gui.get_user_input()
-            if string != None:
-                if string == 'quit':
-                    time.sleep(.2)
-                    break
-                gui.post_to_room('beef room', string)
-                gui.draw_screen()
-
-        gui.switch_room('dude_room')  
-        gui.draw_screen()
-        while True:
-            string = gui.get_user_input()
-            if string != None:
-                if string == 'quit':
-                    time.sleep(.2)
-                    break
-                gui.post_to_room('dude room', string)
-                gui.draw_screen()
 
         gui.close_interface()
+   
         
-        '''
         while True:
             feet = gui.get_user_input()
             if feet != None:
@@ -213,4 +201,4 @@ if __name__ == '__main__':
 
         gui.close_interface()
 
-        '''
+'''
