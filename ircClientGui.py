@@ -4,6 +4,7 @@ import curses
 from threading import *
 import time
 import sys
+import math
 
 #Gui for sdirc program
 
@@ -35,6 +36,10 @@ class interface:
         self.display_pad_size_y = self.DISPLAY_HEIGHT
         self.display_pad_size_x = self.DISPLAY_WIDTH
         
+        #used to determine the size of the display box for the room display
+        self.display_size_y = self.main_win_size_y - 4
+        self.display_size_x = self.main_win_size_x - int(self.main_win_size_x * .25)
+
         self.prompt = 'command-> '
         self.cursor_limit_left = len(self.prompt) + 1
         self.cursor_limit_right = self.main_win_size_x - 1
@@ -80,6 +85,8 @@ class interface:
             self.refresh_current_room()
         else:
             self.main_win.addstr(2, (self.main_win_size_x/2) - (len('lobby')/2), 'Lobby')
+        self.main_win.hline(3,1, curses.ACS_BSBS, self.main_win_size_x -2)
+        self.main_win.vline(4,self.display_size_x + 1, curses.ACS_SBSB, self.main_win_size_y - 7)
         self.main_win.hline(self.main_win_size_y - 3, 1, curses.ACS_BSBS, self.main_win_size_x - 2)
         self.main_win.addstr(self.main_win_size_y - 2, 1, self.prompt)
         self.main_win.move(self.cursor_pos_y, self.cursor_limit_left)
@@ -102,7 +109,7 @@ class interface:
         rooms = self.rooms.keys()
         if room_name not in rooms:
             room_pad = curses.newpad(self.display_pad_size_y, self.display_pad_size_x)
-            num_msgs = 2
+            num_msgs = 3
             self.rooms[room_name] = (room_pad, num_msgs)
             self.current_room = room_name
             self.draw_screen()
@@ -113,12 +120,12 @@ class interface:
             room = self.rooms[room_name]
             del self.rooms[room_name]
             
-
+    
+    #ircClient will be responsible for making sure
+    #   that the room exists and for keeping a list
+    #   of all of the rooms that user belongs to.
     def switch_room(self, room_name):
-        #rooms = self.rooms.keys()
-        #if room_name in rooms:
         self.current_room = room_name
-            #self.draw_screen()
 
     def get_user_input(self):
         string = ''
@@ -149,7 +156,7 @@ if __name__ == '__main__':
 #Having trouble with switch, not sure where the problems are
 #   I need to to create test functions that to determine what being stored in the
 #   rooms and current_room and room_stack variable.
-        
+    
         gui = interface()
         gui.create_room('beef room')
         gui.create_room('dude room')
@@ -168,7 +175,8 @@ if __name__ == '__main__':
                     else:
                         gui.switch_room('dude room')
                         current_room = 'dude room'
-                gui.post_to_room(current_room, string)
+                else:
+                    gui.post_to_room(current_room, string)
                 gui.draw_screen()
         
 
