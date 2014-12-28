@@ -8,11 +8,25 @@ import math
 
 #Gui for sdirc program
 
+
+#******************* Issues/ todo's *********************
+# determine which dimension data members are needed and which
+#   ones can be removed
+# the users display will write over the right side border
+# make diplay box scrollable
+# make users box scrollable
+# add room display selection
+# figure out how users input is going to be handled from server 
+# -probably going to have to modify how the server sends this message
+#   and how the client handles the received message.
+
 class interface:
     INPUT_HEIGHT = 1
     INPUT_WIDTH = 1000
     DISPLAY_HEIGHT = 1000
     DISPLAY_WIDTH = 1000
+    MESSAGE_BASE = 0
+    USER_BASE = 0
     in_buffer = []
     rooms = dict()
     
@@ -25,10 +39,7 @@ class interface:
         self.main_win.nodelay(1)
 
         self.main_win.keypad(1)
-        maxyx = self.main_win.getmaxyx()
-        
-        self.main_win_size_y = maxyx[0]
-        self.main_win_size_x = maxyx[1]
+        self.main_win_size_y, self.main_win_size_x = self.main_win.getmaxyx()
         
         self.input_pad_size_y = self.INPUT_HEIGHT
         self.input_pad_size_x = self.INPUT_WIDTH
@@ -39,18 +50,37 @@ class interface:
         #used to determine the size of the display box for the message display
         self.msg_display_size_y = self.main_win_size_y - 4
         self.msg_display_size_x = self.main_win_size_x - int(self.main_win_size_x * .25)
+
+        #message display box parameters for calling overlay
+        # need to first check that the window dimensions are capable of displaying this
+        #   else need to abort gui and go back to command line interface
+        self.msg_display_min_row = 5
+        self.msg_display_min_col = 1
+        self.msg_display_max_row = self.main_win_size_y - 4
+        self.msg_display_max_col = self.main_win_size_x - int(self.main_win_size_x * .25)
+        
+        #users display box parameters for calling overlay
+        self.users_display_min_row = 5
+        self.users_display_min_col = self.msg_display_max_col + 2
+        self.users_display_max_row = self.main_win_size_y - 4
+        self.users_display_max_col = self.main_win_size_x -1
         
         #used to determine the size of the display box for the user display
-        self.users_display_min_y = 4
+        self.users_display_min_y = 5
         self.users_display_min_x = self.msg_display_size_x + 2
         self.users_display_size_y = self.main_win_size_y - 4
         self.users_display_size_x = self.main_win_size_x - self.msg_display_size_x - 2
+        self.users_display_height = self.users_display_min_y + self.users_display_size_y
+        self.users_display_width = self.users_display_min_x + self.users_display_size_x 
+
+        
 
         self.prompt = 'command-> '
-        self.cursor_limit_left = len(self.prompt) + 1
-        self.cursor_limit_right = self.main_win_size_x - 1
-        self.cursor_pos_y = self.main_win_size_y -2
+        self.cursor_limit_left = len(self.prompt) + 1 # place cursor with one space after prompt
+        self.cursor_limit_right = self.main_win_size_x - 1 
+        self.cursor_pos_y = self.main_win_size_y -2 # n +1 for border +1 for cursor
 
+        #To Handle user input while gui functions
         input_thread = Thread(target=self.keyboard_input)
         input_thread.daemon = True
         input_thread.start()
@@ -75,6 +105,8 @@ class interface:
         self.post_to_room(room, 'self.users_display_min_x = ' + str(self.users_display_min_x))
         self.post_to_room(room, 'self.users_display_size_y = ' + str(self.users_display_size_y))
         self.post_to_room(room, 'self.users_display_size_x = ' + str(self.users_display_size_x))
+        self.post_to_room(room, 'self.users_display_height = ' + str(self.users_display_height))
+        self.post_to_room(room, 'self.users_display_width = ' + str(self.users_display_width))
         self.switch_room(room)
         self.draw_screen()
     
@@ -108,10 +140,10 @@ class interface:
         self.main_win.box()
         if self.current_room:
             self.main_win.addstr(1, (self.main_win_size_x/2) - (len(self.current_room)/2), self.current_room)
-            self.refresh_current_room()
         else:
             self.main_win.addstr(2, (self.main_win_size_x/2) - (len('lobby')/2), 'Lobby')
         
+        self.refresh_current_room()
         #line seperating room name
         self.main_win.hline(2,1, curses.ACS_BSBS, self.main_win_size_x -2)                      
 
@@ -136,18 +168,37 @@ class interface:
         #   has nothing to draw to the screen. In that case we can just pass as it doesn't
         #   have any effect on the screen.
         try:
-            room[0].overlay(self.main_win,2,2,3,2,room[1], self.main_win_size_x - 10)
+            room[0].overlay(self.main_win, 0,0, self.msg_display_min_row, self.msg_display_min_col, self.msg_display_max_row, self.msg_display_max_col)
+            room[2].overlay(self.main_win, 0,0, self.users_display_min_row, self.users_display_min_col, self.users_display_max_row, self.users_display_max_col)
         except:
+            #this needs to be changed so that if the terminal size
+            #cannot handle the gui that the gui closes gracefully and
+            # the command line is functional for the irc
             pass
 
+    
+    #updates the users list for a given room. 
+    def update_user_list(self, room_name, user):
+        room = self.rooms[room_name]
+        if room:
+            room[2].addstr(room[3],0, user)
+            i = room[3] + 1
+            self.rooms[room_name] = (room[0],room[1],room[2],i)
+        self.draw_screen()
+       
     
     def create_room(self, room_name):
         rooms = self.rooms.keys()
         if room_name not in rooms:
             room_pad = curses.newpad(self.display_pad_size_y, self.display_pad_size_x)
-            num_msgs = 4
-            self.rooms[room_name] = (room_pad, num_msgs)
+            user_pad = curses.newpad(self.display_pad_size_y, self.display_pad_size_x)
+            num_msgs = self.MESSAGE_BASE
+            num_users = self.USER_BASE
+            user_pad.addstr(num_users, 0, 'me')
+            num_users += 1
+            self.rooms[room_name] = (room_pad, num_msgs, user_pad, num_users)
             self.current_room = room_name
+
             self.draw_screen()
 
     def leave_room(self, room_name):
@@ -178,9 +229,9 @@ class interface:
         if room_to_post is None:
             room_to_post = 'Lobby'
         room = self.rooms[room_to_post]
-        room[0].addstr(room[1], 2, msg)
+        room[0].addstr(room[1], 0, msg)
         i = 1 + room[1] 
-        self.rooms[room_to_post] = (room[0], i)
+        self.rooms[room_to_post] = (room[0], i, room[2], room[3])
 
 
     def close_interface(self):
@@ -214,6 +265,7 @@ if __name__ == '__main__':
                         current_room = 'dude room'
                 else:
                     gui.post_to_room(current_room, string)
+                    gui.update_user_list(current_room, string)
                 gui.draw_screen()
         
 
