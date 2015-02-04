@@ -12,13 +12,16 @@ import math
 #******************* Issues/ todo's *********************
 # determine which dimension data members are needed and which
 #   ones can be removed
-# the users display will write over the right side border
+# fixed - the users display will write over the right side border
 # make diplay box scrollable
 # make users box scrollable
 # add room display selection
 # figure out how users input is going to be handled from server 
 # -probably going to have to modify how the server sends this message
 #   and how the client handles the received message.
+#
+# Am able to continue writing lines past the low point but and it scrolls
+# correctly. Now I need to to be able to scroll up and down with the arrow keys.
 
 class interface:
     INPUT_HEIGHT = 1
@@ -63,7 +66,7 @@ class interface:
         self.users_display_min_row = 5
         self.users_display_min_col = self.msg_display_max_col + 2
         self.users_display_max_row = self.main_win_size_y - 4
-        self.users_display_max_col = self.main_win_size_x -1
+        self.users_display_max_col = self.main_win_size_x - 2#1
         
         #used to determine the size of the display box for the user display
         self.users_display_min_y = 5
@@ -71,9 +74,9 @@ class interface:
         self.users_display_size_y = self.main_win_size_y - 4
         self.users_display_size_x = self.main_win_size_x - self.msg_display_size_x - 2
         self.users_display_height = self.users_display_min_y + self.users_display_size_y
-        self.users_display_width = self.users_display_min_x + self.users_display_size_x 
+        self.users_display_width = self.users_display_min_x + self.users_display_size_x -2 
 
-        
+           
 
         self.prompt = 'command-> '
         self.cursor_limit_left = len(self.prompt) + 1 # place cursor with one space after prompt
@@ -89,6 +92,9 @@ class interface:
         self.create_room(self.current_room)
         self.draw_screen()
 
+        self.msg_win_top = 0;
+        self.msg_win_total_lines = self.msg_display_max_row - self.msg_display_min_row
+        self.track_i = 0;
     #for debugging purposes, draws all dimensional values into a special purpose room for evaluation
     def dump_val(self):
         room = 'dump room'
@@ -124,7 +130,11 @@ class interface:
         while True:
             try:
                 c = self.main_win.getkey()
-                if c == '\n':
+                if c == 'KEY_UP':
+                    self.msg_scroll_up()
+                elif c == 'KEY_DOWN':
+                    self.msg_scroll_down()
+                elif c == '\n':
                     self.in_buffer.append(string)
                     string = ''
                 else:
@@ -168,7 +178,7 @@ class interface:
         #   has nothing to draw to the screen. In that case we can just pass as it doesn't
         #   have any effect on the screen.
         try:
-            room[0].overlay(self.main_win, 0,0, self.msg_display_min_row, self.msg_display_min_col, self.msg_display_max_row, self.msg_display_max_col)
+            room[0].overlay(self.main_win, self.msg_win_top, 0, self.msg_display_min_row, self.msg_display_min_col, self.msg_display_max_row, self.msg_display_max_col)
             room[2].overlay(self.main_win, 0,0, self.users_display_min_row, self.users_display_min_col, self.users_display_max_row, self.users_display_max_col)
         except:
             #this needs to be changed so that if the terminal size
@@ -190,6 +200,7 @@ class interface:
     def create_room(self, room_name):
         rooms = self.rooms.keys()
         if room_name not in rooms:
+            # create the pad to store each rooms messages
             room_pad = curses.newpad(self.display_pad_size_y, self.display_pad_size_x)
             user_pad = curses.newpad(self.display_pad_size_y, self.display_pad_size_x)
             num_msgs = self.MESSAGE_BASE
@@ -232,6 +243,34 @@ class interface:
         room[0].addstr(room[1], 0, msg)
         i = 1 + room[1] 
         self.rooms[room_to_post] = (room[0], i, room[2], room[3])
+        if room_to_post is self.current_room:
+            if (i - 1) > self.msg_win_total_lines:
+                self.msg_win_top += 1
+
+    
+    #scrolls up on the message screen window when the number of messages
+    #are greater than the number of displayable lines in the window up to the
+    #first message.
+    def msg_scroll_up(self):
+        if self.current_room is 'Lobby':
+            return None
+        room = self.rooms[self.current_room]
+        if room[1] > self.msg_win_total_lines and self.msg_win_top > 0:            
+            self.msg_win_top -= 1
+            self.draw_screen()
+
+    #scrolls down on the message screen window when the number of messages
+    #are greater than the number of displayable lines in the window up to
+    #the last message.
+    def msg_scroll_down(self):
+        if self.current_room is 'Lobby':
+            return None
+        room = self.rooms[self.current_room]
+        self.track_i = room[1]
+        if room[1] > self.msg_win_total_lines:
+            if self.msg_win_top < room[1] - self.msg_win_total_lines - 1:
+                self.msg_win_top += 1
+                self.draw_screen()
 
 
     def close_interface(self):
@@ -265,6 +304,7 @@ if __name__ == '__main__':
                         current_room = 'dude room'
                 else:
                     gui.post_to_room(current_room, string)
+                    #gui.dump_val()
                     gui.update_user_list(current_room, string)
                 gui.draw_screen()
         
