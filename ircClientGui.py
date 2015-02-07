@@ -277,7 +277,7 @@ class interface:
         curses.echo()
         curses.endwin()
 
-'''    
+'''
 if __name__ == '__main__':
 #Having trouble with switch, not sure where the problems are
 #   I need to to create test functions that to determine what being stored in the
@@ -309,8 +309,8 @@ if __name__ == '__main__':
                 gui.draw_screen()
         
 
-        gui.close_interface()
-   
+        gui.close_interface() 
+
         
         while True:
             feet = gui.get_user_input()
